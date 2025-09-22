@@ -57,6 +57,7 @@ MODALITY_PLACEHOLDERS_MAP = {
     "image": "<##IMAGE##>",
     "audio": "<##AUDIO##>",
     "video": "<##VIDEO##>",
+    "vision_embedding": "<##VISION_EMBED##>",
 }
 
 
@@ -157,6 +158,25 @@ class CustomChatCompletionContentSimpleVideoParam(TypedDict, total=False):
     video_url: Required[str]
 
 
+class ChatCompletionContentPartEmbeddingParam(TypedDict, total=False):
+    """Embedding payload for direct placeholder replacement.
+
+    Example JSON payload:
+
+    {
+        "type": "embedding",
+        "embedding": {
+            "data": "<base64 torch.save tensor>",
+            "encoding": "pt"
+        }
+    }
+    """
+
+    embedding: Required[Union[str, dict[str, Any], list[Any]]]
+
+    type: Required[Literal["embedding"]]
+
+
 class CustomThinkCompletionContentParam(TypedDict, total=False):
     """A Think Completion Content Param that accepts a plain text and a boolean.
 
@@ -189,6 +209,7 @@ ChatCompletionContentPartParam: TypeAlias = Union[
     ChatCompletionContentPartImageEmbedsParam,
     CustomChatCompletionContentSimpleAudioParam,
     CustomChatCompletionContentSimpleVideoParam,
+    ChatCompletionContentPartEmbeddingParam,
     str,
     CustomThinkCompletionContentParam,
 ]
@@ -634,6 +655,9 @@ class MultiModalItemTracker(BaseMultiModalItemTracker[object]):
             mm_inputs["audio"] = items_by_modality["audio"]  # A list of audios
         if "video" in items_by_modality:
             mm_inputs["video"] = items_by_modality["video"]  # A list of videos
+        if "vision_embedding" in items_by_modality:
+            mm_inputs["vision_embedding"] = items_by_modality[
+                "vision_embedding"]
         return mm_inputs
 
     def create_parser(self) -> "BaseMultiModalContentParser":
@@ -668,6 +692,9 @@ class AsyncMultiModalItemTracker(BaseMultiModalItemTracker[Awaitable[object]]):
             mm_inputs["audio"] = items_by_modality["audio"]  # A list of audios
         if "video" in items_by_modality:
             mm_inputs["video"] = items_by_modality["video"]  # A list of videos
+        if "vision_embedding" in items_by_modality:
+            mm_inputs["vision_embedding"] = items_by_modality[
+                "vision_embedding"]
         return mm_inputs
 
     def create_parser(self) -> "BaseMultiModalContentParser":
@@ -720,6 +747,10 @@ class BaseMultiModalContentParser(ABC):
 
     @abstractmethod
     def parse_video(self, video_url: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def parse_embedding(self, embedding: Union[str, dict[str, Any], list[Any]]) -> None:  # type: ignore[override]
         raise NotImplementedError
 
 
@@ -778,6 +809,11 @@ class MultiModalContentParser(BaseMultiModalContentParser):
 
         placeholder = self._tracker.add("video", video)
         self._add_placeholder("video", placeholder)
+
+    def parse_embedding(self,
+                        embedding: Union[str, dict[str, Any], list[Any]]) -> None:  # type: ignore[override]
+        placeholder = self._tracker.add("vision_embedding", embedding)
+        self._add_placeholder("vision_embedding", placeholder)
 
 
 class AsyncMultiModalContentParser(BaseMultiModalContentParser):
@@ -840,6 +876,14 @@ class AsyncMultiModalContentParser(BaseMultiModalContentParser):
 
         placeholder = self._tracker.add("video", video)
         self._add_placeholder("video", placeholder)
+
+    def parse_embedding(self,
+                        embedding: Union[str, dict[str, Any], list[Any]]) -> None:  # type: ignore[override]
+        future: asyncio.Future[Union[str, dict[str, Any], list[Any]]] = asyncio.Future()
+        future.set_result(embedding)
+
+        placeholder = self._tracker.add("vision_embedding", future)
+        self._add_placeholder("vision_embedding", placeholder)
 
 
 def validate_chat_template(chat_template: Optional[Union[Path, str]]):
@@ -985,6 +1029,7 @@ _TextParser = partial(cast, ChatCompletionContentPartTextParam)
 _ImageEmbedsParser = partial(cast, ChatCompletionContentPartImageEmbedsParam)
 _InputAudioParser = partial(cast, ChatCompletionContentPartInputAudioParam)
 _RefusalParser = partial(cast, ChatCompletionContentPartRefusalParam)
+_EmbeddingParser = partial(cast, ChatCompletionContentPartEmbeddingParam)
 _PILImageParser = partial(cast, CustomChatCompletionContentPILImageParam)
 _ThinkParser = partial(cast, CustomThinkCompletionContentParam)
 # Need to validate url objects
@@ -1025,6 +1070,7 @@ MM_PARSER_MAP: dict[
     "video_url": lambda part: _VideoParser(part)
     .get("video_url", {})
     .get("url", None),
+    "embedding": lambda part: _EmbeddingParser(part).get("embedding", None),
 }
 
 
@@ -1101,6 +1147,7 @@ VALID_MESSAGE_CONTENT_MM_PART_TYPES = (
     "audio_url",
     "input_audio",
     "video_url",
+    "embedding",
 )
 
 
@@ -1202,6 +1249,11 @@ def _parse_chat_message_content_part(
         str_content = cast(str, content)
         mm_parser.parse_video(str_content)
         modality = "video"
+    elif part_type == "embedding":
+        embedding_content = cast(Union[str, dict[str, Any], list[Any]],
+                                 content)
+        mm_parser.parse_embedding(embedding_content)
+        modality = "vision_embedding"
     else:
         raise NotImplementedError(f"Unknown part type: {part_type}")
 
