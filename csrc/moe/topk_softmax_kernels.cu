@@ -35,6 +35,12 @@ struct AddOp {
     }
 };
 
+struct MaxOp {
+    __host__ __device__ float operator()(float lhs, float rhs) const {
+        return lhs > rhs ? lhs : rhs;
+    }
+};
+
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -82,7 +88,7 @@ __launch_bounds__(TPB) __global__
         threadData = max(static_cast<float>(input[idx]), threadData);
     }
 
-    const float maxElem = BlockReduce(tmpStorage).Max(threadData);
+    const float maxElem = BlockReduce(tmpStorage).Reduce(threadData, MaxOp());
     if (threadIdx.x == 0)
     {
         float_max = maxElem;
