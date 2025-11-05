@@ -20,6 +20,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include "../cuda_compat.h"
+#include "../reduction_ops.cuh"
 
 #ifndef USE_ROCM
     #include <cub/util_type.cuh>
@@ -32,12 +33,6 @@
 struct AddOp {
     __host__ __device__ float operator()(float lhs, float rhs) const {
         return lhs + rhs;
-    }
-};
-
-struct MaxOp {
-    __host__ __device__ float operator()(float lhs, float rhs) const {
-        return lhs > rhs ? lhs : rhs;
     }
 };
 
@@ -88,7 +83,8 @@ __launch_bounds__(TPB) __global__
         threadData = max(static_cast<float>(input[idx]), threadData);
     }
 
-    const float maxElem = BlockReduce(tmpStorage).Reduce(threadData, MaxOp());
+    const float maxElem =
+        BlockReduce(tmpStorage).Reduce(threadData, vllm::MaxOp<float>());
     if (threadIdx.x == 0)
     {
         float_max = maxElem;
